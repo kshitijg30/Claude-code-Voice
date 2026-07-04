@@ -2,3 +2,7 @@ node_modules/
 .env
 server.log
 .cc-settings.json
+sessions.db
+sessions.db-journal
+sessions.db-wal
+sessions.db-shm

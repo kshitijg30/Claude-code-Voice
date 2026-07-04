@@ -260,11 +260,39 @@
   .view.active{display:flex;flex-direction:column;gap:10px}
 
   /* agent trace feed */
-  #trace{
+  #trace,#historyList,#historyDetail{
     display:flex;flex-direction:column;gap:8px;max-height:min(62vh,520px);overflow-y:auto;
     scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent;
   }
   #trace:empty::after{content:"Agent output will appear here while Claude works — switch to this tab during a turn";color:var(--dimmer);font-style:italic;font-size:13px;line-height:1.5}
+  #historyList:empty::after{content:"No past sessions yet. Speak to Claude and they'll show up here.";color:var(--dimmer);font-style:italic;font-size:13px;line-height:1.5}
+  .sess-row{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:11px;
+    background:rgba(255,255,255,.02);border:1px solid var(--line);cursor:pointer;
+    transition:background .18s,border-color .18s;
+  }
+  .sess-row:hover{background:rgba(255,255,255,.05);border-color:var(--line-hi)}
+  .sess-row .sess-title{flex:1;font-size:13.5px;color:#dfe4f2;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sess-row .sess-meta{font-size:11px;color:var(--dimmer);font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  .sess-row .sess-count{
+    font-size:11px;color:var(--dim);padding:2px 8px;border-radius:999px;
+    background:rgba(167,139,255,.10);border:1px solid rgba(167,139,255,.20);
+  }
+  .backbtn{
+    align-self:flex-start;background:transparent;border:1px solid var(--line);color:var(--dim);
+    font:600 11px/1 'Inter',sans-serif;letter-spacing:.4px;text-transform:uppercase;
+    padding:6px 12px;border-radius:8px;cursor:pointer;transition:color .18s,border-color .18s;
+  }
+  .backbtn:hover{color:var(--txt);border-color:var(--line-hi)}
+  .turn-block{
+    background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;display:flex;flex-direction:column;gap:8px;
+  }
+  .turn-user{color:#d6f2e5;font-size:14px;line-height:1.55}
+  .turn-reply{color:var(--txt);font-size:14px;line-height:1.6;white-space:pre-wrap}
+  .turn-lbl{font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .turn-err{color:#ffc8d0;font-size:12.5px}
+  .turn-empty{color:var(--dimmer);font-style:italic;font-size:12.5px}
   .act{
     display:flex;align-items:flex-start;gap:9px;font-size:13.5px;color:#cdd4e6;line-height:1.45;
     padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid transparent;
@@ -280,6 +308,51 @@
   .act.result.err{border-color:rgba(255,112,134,.2);color:#ffc8d0}
   .act .code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#e3e8f5}
   .act .detail{display:block;margin-top:4px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--dimmer);white-space:pre-wrap;word-break:break-all}
+
+  /* agents dashboard */
+  .agents-wrap{width:100%;max-width:900px;display:flex;flex-direction:column;gap:12px}
+  .agents-dash{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+  .agent-card{
+    padding:12px 14px;border-radius:14px;cursor:pointer;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
+    border:1px solid var(--line);transition:border-color .2s,background .2s;
+  }
+  .agent-card:hover,.agent-card.sel{border-color:rgba(167,139,255,.35);background:rgba(167,139,255,.06)}
+  .agent-card .ac-top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .agent-card .ac-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .agent-card .ac-dot.run{background:var(--think);box-shadow:0 0 8px var(--think)}
+  .agent-card .ac-dot.pause{background:var(--dimmer)}
+  .agent-card .ac-dot.idle{background:var(--live)}
+  .agent-card .ac-name{flex:1;font-size:13.5px;font-weight:600;color:#dfe4f2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .agent-card .ac-meta{font-size:11px;color:var(--dimmer);line-height:1.4}
+  .agent-card .ac-feed{font-size:11.5px;color:var(--dim);margin-top:6px;min-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .agent-detail{display:flex;flex-direction:column;gap:10px}
+  .agent-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .btn{
+    padding:7px 12px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.04);
+    color:var(--txt);font:600 11px/1 'Inter',sans-serif;letter-spacing:.3px;cursor:pointer;
+    transition:background .18s,border-color .18s;
+  }
+  .btn:hover{background:rgba(255,255,255,.08);border-color:var(--line-hi)}
+  .btn.primary{background:rgba(167,139,255,.18);border-color:rgba(167,139,255,.35)}
+  .btn.danger{border-color:rgba(255,112,134,.3);color:#ffc8d0}
+  .prompt-area{
+    width:100%;min-height:88px;resize:vertical;padding:10px 12px;border-radius:12px;
+    border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--txt);
+    font:400 13px/1.55 'Inter',sans-serif;
+  }
+  .task-row{display:flex;gap:8px}
+  .task-row input{
+    flex:1;padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(0,0,0,.25);color:var(--txt);font:400 14px/1 'Inter',sans-serif;
+  }
+  .agent-panels{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .agent-trace{max-height:min(40vh,360px);overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+  .agent-chat{max-height:min(40vh,360px);overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+  .chat-msg{padding:8px 10px;border-radius:10px;font-size:13px;line-height:1.5}
+  .chat-msg.user{background:rgba(63,228,168,.08);color:#d6f2e5}
+  .chat-msg.bot{background:rgba(167,139,255,.08);color:var(--txt)}
+  @media (max-width:720px){.agent-panels{grid-template-columns:1fr}}
 
   @media (max-width:520px){
     .sub{font-size:19px;margin-bottom:26px}
@@ -316,6 +389,8 @@
   <div class="tabs">
     <button type="button" class="tab active" data-view="chat">Chat</button>
     <button type="button" class="tab" data-view="trace">Agent trace<span class="badge" id="traceBadge">new</span></button>
+    <button type="button" class="tab" data-view="agents">Agents</button>
+    <button type="button" class="tab" data-view="history">History</button>
   </div>
 
   <div class="view active" id="viewChat">
@@ -327,6 +402,40 @@
     <div class="card"><div class="lbl"><span class="tag cc"></span>Live agent output</div><div id="trace"></div></div>
   </div>
 
+  <div class="view" id="viewAgents">
+    <div class="agents-wrap">
+      <div class="agents-dash" id="agentDash"></div>
+      <div class="card agent-detail" id="agentDetail" style="display:none">
+        <div class="lbl"><span class="tag cc"></span><span id="agentDetailName">Agent</span></div>
+        <div class="agent-toolbar">
+          <button type="button" class="btn primary" id="btnSelectVoice">Use for voice</button>
+          <button type="button" class="btn" id="btnPause">Pause</button>
+          <button type="button" class="btn" id="btnHandoff">Hand off → new agent</button>
+        </div>
+        <label class="lbl" style="margin:0"><span class="tag cc"></span>System prompt</label>
+        <textarea class="prompt-area" id="agentPrompt" placeholder="Instructions for this agent…"></textarea>
+        <button type="button" class="btn" id="btnSavePrompt">Save prompt</button>
+        <div class="task-row">
+          <input id="agentTask" placeholder="Send a task to this agent (runs in parallel)…" />
+          <button type="button" class="btn primary" id="btnRunTask">Run</button>
+        </div>
+        <div class="agent-panels">
+          <div><div class="lbl"><span class="tag you"></span>Conversation</div><div class="agent-chat" id="agentChat"></div></div>
+          <div><div class="lbl"><span class="tag cc"></span>Live activity</div><div class="agent-trace" id="agentTrace"></div></div>
+        </div>
+      </div>
+      <button type="button" class="btn primary" id="btnNewAgent" style="align-self:flex-start">+ New agent</button>
+    </div>
+  </div>
+
+  <div class="view" id="viewHistory">
+    <div class="card">
+      <div class="lbl" id="historyLbl"><span class="tag cc"></span>Past sessions</div>
+      <div id="historyList"></div>
+      <div id="historyDetail" style="display:none"></div>
+    </div>
+  </div>
+
   <div class="foot" id="foot">connecting…</div>
 
 <script>
@@ -334,8 +443,13 @@
   const $ = (id) => document.getElementById(id);
   const body=document.body, micEl=$('mic'), icoEl=$('ico'), stateEl=$('state'),
         hintEl=$('hint'), youEl=$('you'), claudeEl=$('claude'), footEl=$('foot'), bannerEl=$('banner'),
-        traceEl=$('trace'), traceBadge=$('traceBadge'), sessPathEl=$('sessPath'), sessIdEl=$('sessId');
-  let activeView='chat';
+        traceEl=$('trace'), traceBadge=$('traceBadge'), sessPathEl=$('sessPath'), sessIdEl=$('sessId'),
+        historyListEl=$('historyList'), historyDetailEl=$('historyDetail'), historyLblEl=$('historyLbl'),
+        agentDashEl=$('agentDash'), agentDetailEl=$('agentDetail'), agentPromptEl=$('agentPrompt'),
+        agentChatEl=$('agentChat'), agentTraceEl=$('agentTrace'), agentTaskEl=$('agentTask');
+  let activeView='chat', agents=[], selectedAgentId=null, activeVoiceAgentId=null;
+  const agentTraces=new Map(), agentChats=new Map(), agentFeeds=new Map();
+  let defaultPrompt='';
 
   const ICON={idle:'🎙️',listening:'🎧',thinking:'💭',speaking:'🔊',error:'⚠️'};
   const TEXT={idle:'Click the mic to start',listening:'<b>Listening…</b> go ahead',
@@ -366,12 +480,19 @@
   }
   function onBridge(ev){
     let m; try{ m=JSON.parse(ev.data); }catch{ return; }
-    if(m.type==='status'){ if(m.state) setState(m.state, m.detail?('<b>'+m.detail+'</b>'):null); }
-    else if(m.type==='partial'){ youEl.classList.remove('muted'); youEl.textContent=m.text; }
-    else if(m.type==='transcript'){ youEl.classList.remove('muted'); youEl.textContent=m.text; clearActivity(); }
-    else if(m.type==='session'){ setSession(m.cwd, m.sessionId); }
-    else if(m.type==='activity'){ addActivity(m); }
-    else if(m.type==='reply'){ speak(m.text, m.error); }
+    if(m.type==='agents'){ agents=m.agents||[]; renderAgentDash(); return; }
+    if(m.type==='active_agent'){ activeVoiceAgentId=m.agentId; renderAgentDash(); if(m.agentId===selectedAgentId) $('btnSelectVoice').textContent='Voice target ✓'; return; }
+    if(m.type==='agent:created'||m.type==='agent:handoff'){ if(m.agentId) selectAgent(m.agentId); return; }
+    const aid=m.agentId||activeVoiceAgentId;
+    if(m.type==='status'){ if(m.state && aid===activeVoiceAgentId) setState(m.state, m.detail?('<b>'+m.detail+'</b>'):null); }
+    else if(m.type==='partial'){ if(aid===activeVoiceAgentId){ youEl.classList.remove('muted'); youEl.textContent=m.text; } }
+    else if(m.type==='transcript'){ if(aid===activeVoiceAgentId){ youEl.classList.remove('muted'); youEl.textContent=m.text; } clearAgentTrace(aid); addChat(aid,'user',m.text); clearActivity(); }
+    else if(m.type==='session'){ if(aid===activeVoiceAgentId) setSession(m.cwd, m.sessionId); }
+    else if(m.type==='activity'){ addActivity(m, aid); bumpFeed(aid, m); }
+    else if(m.type==='agent:reply'||m.type==='reply'){
+      addChat(aid,'bot',m.text); if(aid===activeVoiceAgentId) speak(m.text, m.error);
+      else if(selectedAgentId===aid) loadAgentChat(aid);
+    }
   }
 
   // ---- working folder + session id ----
@@ -387,12 +508,154 @@
       document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===activeView));
       $('viewChat').classList.toggle('active',activeView==='chat');
       $('viewTrace').classList.toggle('active',activeView==='trace');
+      $('viewAgents').classList.toggle('active',activeView==='agents');
+      $('viewHistory').classList.toggle('active',activeView==='history');
       if(activeView==='trace') traceBadge.classList.remove('show');
+      if(activeView==='history') loadHistory();
+      if(activeView==='agents'&&selectedAgentId) loadAgentChat(selectedAgentId);
     });
   });
+
+  // ---- agents ----
+  function wsSend(obj){ if(bridgeReady) try{bridge.send(JSON.stringify(obj));}catch{} }
+  function renderAgentDash(){
+    agentDashEl.innerHTML='';
+    for(const a of agents){
+      const card=document.createElement('div'); card.className='agent-card'+(a.id===selectedAgentId?' sel':'');
+      const dot=document.createElement('span'); dot.className='ac-dot '+(a.busy?'run':a.status==='paused'?'pause':'idle');
+      const name=document.createElement('span'); name.className='ac-name'; name.textContent=a.name;
+      const top=document.createElement('div'); top.className='ac-top'; top.appendChild(dot); top.appendChild(name);
+      const meta=document.createElement('div'); meta.className='ac-meta';
+      meta.textContent=(a.turn_count||0)+' turns'+(a.id===activeVoiceAgentId?' · voice':'')+(a.status==='paused'?' · paused':'');
+      const feed=document.createElement('div'); feed.className='ac-feed'; feed.textContent=agentFeeds.get(a.id)||'';
+      card.appendChild(top); card.appendChild(meta); card.appendChild(feed);
+      card.addEventListener('click',()=>selectAgent(a.id));
+      agentDashEl.appendChild(card);
+    }
+  }
+  function selectAgent(id){
+    selectedAgentId=id; agentDetailEl.style.display='';
+    const a=agents.find(x=>x.id===id); if(!a) return;
+    $('agentDetailName').textContent=a.name;
+    agentPromptEl.value=a.system_prompt||defaultPrompt;
+    $('btnPause').textContent=a.status==='paused'?'Resume':'Pause';
+    $('btnSelectVoice').textContent=id===activeVoiceAgentId?'Voice target ✓':'Use for voice';
+    renderAgentDash(); loadAgentChat(id); syncAgentTrace(id);
+  }
+  function loadAgentChat(id){
+    agentChatEl.innerHTML='';
+    fetch('/api/agents/'+encodeURIComponent(id)).then(r=>r.json()).then((data)=>{
+      for(const t of (data.turns||[])){
+        addChatDom('user',t.user_text); if(t.reply_text) addChatDom('bot',t.reply_text);
+      }
+      agentChatEl.scrollTop=agentChatEl.scrollHeight;
+    }).catch(()=>{});
+    function addChatDom(role,text){ const d=document.createElement('div'); d.className='chat-msg '+role; d.textContent=text; agentChatEl.appendChild(d); }
+  }
+  function addChat(id,role,text){
+    if(!text) return;
+    const arr=agentChats.get(id)||[]; arr.push({role,text}); agentChats.set(id,arr);
+    if(id===selectedAgentId){
+      const d=document.createElement('div'); d.className='chat-msg '+role; d.textContent=text;
+      agentChatEl.appendChild(d); agentChatEl.scrollTop=agentChatEl.scrollHeight;
+    }
+  }
+  function clearAgentTrace(id){ agentTraces.set(id,[]); if(id===selectedAgentId) agentTraceEl.innerHTML=''; }
+  function syncAgentTrace(id){
+    agentTraceEl.innerHTML='';
+    for(const m of (agentTraces.get(id)||[])) appendAct(agentTraceEl,m);
+    agentTraceEl.scrollTop=agentTraceEl.scrollHeight;
+  }
+  function bumpFeed(id,m){ agentFeeds.set(id,(m.text||'').slice(0,60)); renderAgentDash(); }
+  $('btnNewAgent').addEventListener('click',()=>{
+    const name=prompt('Agent name:','Agent '+(agents.length+1)); if(!name) return;
+    wsSend({type:'agent:create',name,systemPrompt:defaultPrompt});
+  });
+  $('btnSavePrompt').addEventListener('click',()=>{
+    if(!selectedAgentId) return;
+    wsSend({type:'agent:prompt',agentId:selectedAgentId,systemPrompt:agentPromptEl.value});
+  });
+  $('btnSelectVoice').addEventListener('click',()=>{ if(selectedAgentId) wsSend({type:'agent:select',agentId:selectedAgentId}); });
+  $('btnPause').addEventListener('click',()=>{
+    if(!selectedAgentId) return;
+    const a=agents.find(x=>x.id===selectedAgentId);
+    wsSend({type:a&&a.status==='paused'?'agent:resume_agent':'agent:pause',agentId:selectedAgentId});
+  });
+  $('btnHandoff').addEventListener('click',()=>{
+    if(!selectedAgentId) return;
+    const name=prompt('New agent name:','Handoff agent'); if(!name) return;
+    wsSend({type:'agent:handoff',fromId:selectedAgentId,name,systemPrompt:agentPromptEl.value||defaultPrompt});
+  });
+  $('btnRunTask').addEventListener('click',()=>{
+    if(!selectedAgentId||!agentTaskEl.value.trim()) return;
+    wsSend({type:'agent:run',agentId:selectedAgentId,text:agentTaskEl.value.trim()});
+    addChat(selectedAgentId,'user',agentTaskEl.value.trim()); agentTaskEl.value='';
+  });
+  agentTaskEl.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();$('btnRunTask').click();} });
+
+  // ---- history ----
+  function fmtTime(ms){
+    const d=new Date(ms), now=new Date();
+    const sameDay=d.toDateString()===now.toDateString();
+    if(sameDay) return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+  }
+  function loadHistory(){
+    historyDetailEl.style.display='none'; historyListEl.style.display='';
+    historyLblEl.innerHTML='<span class="tag cc"></span>Past sessions';
+    historyListEl.innerHTML='';
+    fetch('/api/sessions').then(r=>r.json()).then(({sessions})=>{
+      historyListEl.innerHTML='';
+      if(!sessions||!sessions.length) return;
+      for(const s of sessions){
+        const row=document.createElement('div'); row.className='sess-row';
+        const title=document.createElement('div'); title.className='sess-title';
+        title.textContent=s.title||'(untitled session)';
+        const count=document.createElement('div'); count.className='sess-count';
+        count.textContent=s.turn_count+(s.turn_count===1?' turn':' turns');
+        const meta=document.createElement('div'); meta.className='sess-meta';
+        meta.textContent=fmtTime(s.updated_at);
+        row.appendChild(title); row.appendChild(count); row.appendChild(meta);
+        row.addEventListener('click',()=>openSession(s.id));
+        historyListEl.appendChild(row);
+      }
+    }).catch(()=>{ historyListEl.textContent='Could not load history.'; });
+  }
+  function openSession(id){
+    fetch('/api/sessions/'+encodeURIComponent(id)).then(r=>r.json()).then((data)=>{
+      historyListEl.style.display='none'; historyDetailEl.style.display='';
+      historyDetailEl.innerHTML='';
+      const back=document.createElement('button'); back.className='backbtn'; back.textContent='← Back to list';
+      back.addEventListener('click',loadHistory);
+      historyDetailEl.appendChild(back);
+      historyLblEl.innerHTML='<span class="tag cc"></span>Session '+String(id).slice(0,8);
+      const turns=data.turns||[];
+      if(!turns.length){
+        const empty=document.createElement('div'); empty.className='turn-empty';
+        empty.textContent='This session has no recorded turns yet.';
+        historyDetailEl.appendChild(empty); return;
+      }
+      for(const t of turns){
+        const block=document.createElement('div'); block.className='turn-block';
+        const uLbl=document.createElement('div'); uLbl.className='turn-lbl'; uLbl.textContent='You · '+fmtTime(t.ts);
+        const uTxt=document.createElement('div'); uTxt.className='turn-user'; uTxt.textContent=t.user_text||'';
+        block.appendChild(uLbl); block.appendChild(uTxt);
+        if(t.reply_text){
+          const rLbl=document.createElement('div'); rLbl.className='turn-lbl'; rLbl.textContent='Claude';
+          const rTxt=document.createElement('div'); rTxt.className='turn-reply'; rTxt.textContent=t.reply_text;
+          block.appendChild(rLbl); block.appendChild(rTxt);
+        } else if(t.error){
+          const eLbl=document.createElement('div'); eLbl.className='turn-lbl'; eLbl.textContent='Error';
+          const eTxt=document.createElement('div'); eTxt.className='turn-err'; eTxt.textContent=t.error;
+          block.appendChild(eLbl); block.appendChild(eTxt);
+        }
+        historyDetailEl.appendChild(block);
+      }
+    }).catch(()=>{ historyDetailEl.textContent='Could not load session.'; });
+  }
   const ACT_ICON={tool:'▸',thinking:'💭',say:'“',result:'↩'};
   function clearActivity(){ traceEl.innerHTML=''; traceBadge.classList.remove('show'); }
-  function addActivity(m){
+  function appendAct(el,m){
     const row=document.createElement('div');
     const kind=m.kind||'tool';
     row.className='act '+kind+(kind==='result'&&m.isError?' err':'');
@@ -405,7 +668,13 @@
     wrap.appendChild(body);
     if(m.detail){ const d=document.createElement('span'); d.className='detail'; d.textContent=m.detail; wrap.appendChild(d); }
     row.appendChild(ico); row.appendChild(wrap);
-    traceEl.appendChild(row); traceEl.scrollTop=traceEl.scrollHeight;
+    el.appendChild(row); el.scrollTop=el.scrollHeight;
+  }
+  function addActivity(m, agentId){
+    const id=agentId||activeVoiceAgentId;
+    const arr=agentTraces.get(id)||[]; arr.push(m); agentTraces.set(id,arr);
+    appendAct(traceEl,m);
+    if(id===selectedAgentId) appendAct(agentTraceEl,m);
     if(activeView!=='trace') traceBadge.classList.add('show');
   }
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -503,7 +772,12 @@
   });
 
   // load config + bridge after handler is bound
-  fetch('/config').then(r=>r.json()).then(c=>{ setSession(c.projectDir, null); footEl.innerHTML='bridge + Deepgram Flux + Puter TTS · headless Claude Code'; if(c && c.hasKey===false) banner('No Deepgram key set on the server. Add <code>DEEPGRAM_API_KEY</code> to <code>.env</code> and restart <code>npm start</code>.'); }).catch(()=>{});
+  fetch('/config').then(r=>r.json()).then(c=>{
+    setSession(c.projectDir, null);
+    defaultPrompt=c.defaultSystemPrompt||'';
+    footEl.innerHTML='bridge + Deepgram Flux + Puter TTS · multi-agent Claude Code';
+    if(c && c.hasKey===false) banner('No Deepgram key set on the server. Add <code>DEEPGRAM_API_KEY</code> to <code>.env</code> and restart <code>npm start</code>.');
+  }).catch(()=>{});
   if(location.protocol!=='file:') connectBridge();
 })();
 </script>

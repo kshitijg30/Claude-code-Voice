@@ -1,9 +1,4 @@
-// Local bridge: browser <-> Deepgram Flux <-> headless Claude Code.
-//
-// The browser streams raw mic PCM to this server over one WebSocket. The server
-// holds the Deepgram key (proxying Flux so no key ever reaches the browser),
-// detects end-of-turn, runs `claude -p` resuming ONE session id, and sends the
-// spoken reply text back to the browser for TTS.
+// Local bridge: browser <-> Deepgram Flux <-> headless Claude Code (multi-agent).
 
 const http = require('http');
 const fs = require('fs');
@@ -11,60 +6,83 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer, WebSocket } = require('ws');
+const store = require('./db');
 
-// ---- config (.env is a simple KEY=VALUE file, gitignored) ----
 loadDotEnv(path.join(__dirname, '.env'));
 
 const PORT = parseInt(process.env.PORT || '5111', 10);
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || '';
-const PROJECT_DIR = process.env.PROJECT_DIR || __dirname; // Claude works here (sees index.html)
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'opus';
+const PROJECT_DIR = process.env.PROJECT_DIR || __dirname;
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';
 const TURN_TIMEOUT_MS = parseInt(process.env.TURN_TIMEOUT_MS || '180000', 10);
 const DG_URL = 'wss://api.deepgram.com/v2/listen?model=flux-general-en&encoding=linear16&sample_rate=16000&eot_threshold=0.7';
 
-// Voice persona: Claude's text reply is spoken aloud, so it should talk naturally.
-const SYSTEM_PROMPT = [
+const DEFAULT_SYSTEM_PROMPT = [
   'You are a hands-on voice assistant. Everything you say is read aloud by a',
   'text-to-speech engine, so speak like a person on a call: warm, natural,',
   'first-person, concise. Never use markdown, bullet points, code fences, emoji,',
   'or raw file paths in your spoken reply. You have full tool access and can read',
-  'and edit the files in this project, including index.html and server.js. When',
-  'asked to do something, DO it with your tools and narrate what you are doing in',
-  'one or two natural sentences, then give a short spoken confirmation. Keep every',
-  'reply to a few sentences unless asked for detail.',
+  'and edit files in this project. When asked to do something, DO it with your',
+  'tools and narrate briefly, then give a short spoken confirmation.',
 ].join(' ');
 
-// A PreToolUse hook blocks ONLY speak.py + agents.log.yaml (side effects the
-// global CLAUDE.md would otherwise force every turn). --settings needs a FILE path.
 const SETTINGS_FILE = path.join(__dirname, '.cc-settings.json');
 fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
   hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [
     { type: 'command', command: `node ${path.join(__dirname, 'cc-hook.js')}` }] }] },
 }, null, 2));
 
-// ---- static server ----
 const server = http.createServer((req, res) => {
   const url = (req.url || '/').split('?')[0];
   if (url === '/config') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ projectDir: PROJECT_DIR, hasKey: !!DEEPGRAM_API_KEY }));
-    return;
+    return sendJson(res, 200, { projectDir: PROJECT_DIR, hasKey: !!DEEPGRAM_API_KEY, model: CLAUDE_MODEL,
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT });
+  }
+  if (url === '/api/sessions') return sendJson(res, 200, { sessions: store.listSessions() });
+  if (url === '/api/agents') return sendJson(res, 200, { agents: store.listAgents() });
+  const m = url.match(/^\/api\/(?:sessions|agents)\/([\w-]+)$/);
+  if (m) {
+    const data = store.getSession(m[1]);
+    if (!data) return sendJson(res, 404, { error: 'not found' });
+    return sendJson(res, 200, data);
   }
   if (url === '/' || url === '/index.html') return sendFile(res, path.join(__dirname, 'index.html'), 'text/html');
   res.writeHead(404); res.end('not found');
 });
 
-// ---- per-browser session ----
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (browser) => {
-  const sessionId = crypto.randomUUID(); // one continuous Claude Code session
-  let started = false;   // first turn creates the session, later turns resume it
-  let busy = false;      // true while Claude is thinking/speaking (mic gated off)
-  let dg = null;         // Deepgram Flux socket for the current listening window
-  log(`browser connected — session ${sessionId}`);
+  let activeAgentId = null;
+  let voiceBusy = false;
+  let dg = null;
+  const rt = new Map(); // agentId -> { started, busy }
 
   function say(obj) { try { browser.send(JSON.stringify(obj)); } catch {} }
+  function runtime(id) {
+    if (!rt.has(id)) rt.set(id, { started: false, busy: false });
+    return rt.get(id);
+  }
+  function agentRow(a) {
+    const r = runtime(a.id);
+    return { id: a.id, name: a.name || 'Agent', status: a.status || 'active',
+      turn_count: a.turn_count, parent_id: a.parent_id, busy: r.busy, started: r.started,
+      system_prompt: a.system_prompt || DEFAULT_SYSTEM_PROMPT };
+  }
+  function pushAgents() { say({ type: 'agents', agents: store.listAgents().map(agentRow) }); }
+
+  function ensureDefaultAgent() {
+    const list = store.listAgents();
+    if (list.length) return list[0].id;
+    const id = crypto.randomUUID();
+    store.createAgent({ id, name: 'Voice Agent', projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT });
+    return id;
+  }
+
+  activeAgentId = ensureDefaultAgent();
+  pushAgents();
+  say({ type: 'active_agent', agentId: activeAgentId });
 
   function openDeepgram() {
     if (dg && (dg.readyState === WebSocket.OPEN || dg.readyState === WebSocket.CONNECTING)) return;
@@ -74,57 +92,107 @@ wss.on('connection', (browser) => {
       let m; try { m = JSON.parse(raw.toString()); } catch { return; }
       if (m.type !== 'TurnInfo') return;
       const t = (m.transcript || '').trim();
-      if (m.event === 'EndOfTurn') {
-        if (!busy && t) handleTurn(t);
-      } else if (t) {
-        say({ type: 'partial', text: t });
-      }
+      if (m.event === 'EndOfTurn' && !voiceBusy && t) handleVoiceTurn(t);
+      else if (t) say({ type: 'partial', text: t });
     });
-    dg.on('error', (e) => { log('deepgram error: ' + e.message); say({ type: 'status', state: 'error', detail: 'speech service error' }); });
-    dg.on('close', () => { /* reopened by start/resume as needed */ });
+    dg.on('error', () => say({ type: 'status', state: 'error', detail: 'speech service error' }));
   }
   function closeDeepgram() { try { dg && dg.close(); } catch {} dg = null; }
 
-  function handleTurn(text) {
-    busy = true;
-    closeDeepgram();                       // stop listening while we think/speak
-    say({ type: 'transcript', text });
-    say({ type: 'status', state: 'thinking' });
-    log(`turn: "${text}"`);
-    runClaude({ text, sessionId, resume: started },
-      (ev) => say(ev),                     // live activity: session/activity events
+  function runAgentTurn(agentId, text, opts = {}) {
+    const meta = store.getAgentMeta(agentId);
+    if (!meta || meta.status === 'paused') {
+      say({ type: 'agent:error', agentId, error: 'Agent is paused' }); return;
+    }
+    const r = runtime(agentId);
+    if (r.busy) { say({ type: 'agent:error', agentId, error: 'Agent is busy' }); return; }
+
+    r.busy = true; pushAgents();
+    if (opts.voice) { voiceBusy = true; closeDeepgram(); say({ type: 'transcript', text }); say({ type: 'status', state: 'thinking' }); }
+
+    store.ensureSession({ sessionId: agentId, projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
+      name: meta.name, systemPrompt: meta.system_prompt });
+    const turnId = store.startTurn({ sessionId: agentId, userText: text });
+    const prompt = meta.system_prompt || DEFAULT_SYSTEM_PROMPT;
+
+    runClaude({ text, sessionId: agentId, resume: r.started, systemPrompt: prompt },
+      (ev) => {
+        if (ev.type === 'activity') store.recordActivity({ turnId, kind: ev.kind, text: ev.text, detail: ev.detail, isError: ev.isError });
+        say({ ...ev, agentId });
+      },
       (reply, err) => {
-        if (err) { log('claude error: ' + err); say({ type: 'reply', text: 'Sorry, something went wrong on my end. Could you try again?', error: err }); }
-        else { started = true; say({ type: 'reply', text: reply }); }
-        say({ type: 'status', state: 'speaking' });
+        r.busy = false;
+        if (!err) r.started = true;
+        pushAgents();
+        if (err) { store.completeTurn({ turnId, error: err }); say({ type: 'agent:reply', agentId, text: 'Something went wrong.', error: err }); }
+        else { store.completeTurn({ turnId, replyText: reply }); say({ type: 'agent:reply', agentId, text: reply }); }
+        if (opts.voice) { voiceBusy = false; say({ type: 'status', state: 'speaking' }); }
+      });
+  }
+
+  function handleVoiceTurn(text) { runAgentTurn(activeAgentId, text, { voice: true }); }
+
+  function handoff(fromId, name, systemPrompt) {
+    const meta = store.getAgentMeta(fromId);
+    if (!meta) return;
+    const summaryPrompt = 'Summarize this entire session for handoff to another agent. Include goals, decisions, files changed, current state, and open items. Be concise but complete.';
+    const r = runtime(fromId);
+    r.busy = true; pushAgents();
+    runClaude({ text: summaryPrompt, sessionId: fromId, resume: r.started,
+      systemPrompt: 'You produce handoff summaries only. No tools.' },
+      () => {},
+      (summary, err) => {
+        r.busy = false; pushAgents();
+        const id = crypto.randomUUID();
+        const base = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+        const full = base + (summary && !err ? '\n\n--- Handoff from ' + (meta.name || 'agent') + ' ---\n' + summary : '');
+        store.createAgent({ id, name: name || 'Agent (handoff)', projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
+          systemPrompt: full, parentId: fromId, summary: summary || null });
+        pushAgents();
+        say({ type: 'agent:handoff', fromId, agentId: id, summary: summary || '' });
       });
   }
 
   browser.on('message', (data, isBinary) => {
-    if (isBinary) {                        // raw PCM audio frame
-      if (!busy && dg && dg.readyState === WebSocket.OPEN) dg.send(data);
+    if (isBinary) {
+      if (!voiceBusy && dg && dg.readyState === WebSocket.OPEN) dg.send(data);
       return;
     }
     let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
     if (msg.type === 'start') openDeepgram();
     else if (msg.type === 'stop') closeDeepgram();
-    else if (msg.type === 'resume') { busy = false; openDeepgram(); } // TTS finished
+    else if (msg.type === 'resume') { voiceBusy = false; openDeepgram(); }
+    else if (msg.type === 'agent:create') {
+      const id = crypto.randomUUID();
+      store.createAgent({ id, name: msg.name || 'Agent', projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
+        systemPrompt: msg.systemPrompt || DEFAULT_SYSTEM_PROMPT });
+      pushAgents(); say({ type: 'agent:created', agentId: id });
+    } else if (msg.type === 'agent:select') {
+      activeAgentId = msg.agentId; say({ type: 'active_agent', agentId: activeAgentId });
+    } else if (msg.type === 'agent:prompt') {
+      store.updateAgent({ id: msg.agentId, systemPrompt: msg.systemPrompt });
+      pushAgents();
+    } else if (msg.type === 'agent:pause') {
+      store.updateAgent({ id: msg.agentId, status: 'paused' }); pushAgents();
+    } else if (msg.type === 'agent:resume_agent') {
+      store.updateAgent({ id: msg.agentId, status: 'active' }); pushAgents();
+    } else if (msg.type === 'agent:run') {
+      runAgentTurn(msg.agentId, msg.text || '');
+    } else if (msg.type === 'agent:handoff') {
+      handoff(msg.fromId, msg.name, msg.systemPrompt);
+    }
   });
 
-  browser.on('close', () => { closeDeepgram(); log(`browser disconnected — session ${sessionId}`); });
+  browser.on('close', () => closeDeepgram());
 });
 
-function runClaude({ text, sessionId, resume }, onEvent, done) {
-  // stream-json emits one JSON object per line: system/init, assistant (text +
-  // tool_use), user (tool_result), and a final result. We forward the actions
-  // as they happen so the UI can show what Claude is doing.
+function runClaude({ text, sessionId, resume, systemPrompt }, onEvent, done) {
   const args = ['-p', text, '--output-format', 'stream-json', '--verbose',
     '--model', CLAUDE_MODEL, '--permission-mode', 'acceptEdits',
     '--add-dir', PROJECT_DIR, '--settings', SETTINGS_FILE,
-    '--append-system-prompt', SYSTEM_PROMPT];
+    '--append-system-prompt', systemPrompt || DEFAULT_SYSTEM_PROMPT];
   args.push(resume ? '--resume' : '--session-id', sessionId);
 
-  // stdin 'ignore' closes it immediately so claude doesn't wait 3s for piped input.
   const child = spawn('claude', args, { cwd: PROJECT_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
   let buf = '', errOut = '', finalText = null, finalErr = null;
   const timer = setTimeout(() => child.kill('SIGKILL'), TURN_TIMEOUT_MS);
@@ -142,7 +210,7 @@ function runClaude({ text, sessionId, resume }, onEvent, done) {
   child.on('close', (code) => {
     clearTimeout(timer);
     if (finalErr) return done(null, finalErr);
-    if (finalText != null) return done(finalText || 'Okay, done.', null);
+    if (finalText != null) return done(finalText || 'Done.', null);
     done(null, code !== 0 ? `exit ${code}: ${errOut.slice(0, 300)}` : 'no result');
   });
 
@@ -153,11 +221,8 @@ function runClaude({ text, sessionId, resume }, onEvent, done) {
     } else if (e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
       for (const c of e.message.content) {
         if (c.type === 'tool_use') {
-          onEvent({
-            type: 'activity', kind: 'tool', tool: c.name,
-            text: describeTool(c.name, c.input || {}),
-            detail: detailForTool(c.name, c.input || {}),
-          });
+          onEvent({ type: 'activity', kind: 'tool', text: describeTool(c.name, c.input || {}),
+            detail: detailForTool(c.name, c.input || {}) });
         } else if (c.type === 'thinking' && c.thinking && c.thinking.trim()) {
           onEvent({ type: 'activity', kind: 'thinking', text: c.thinking.trim() });
         } else if (c.type === 'text' && c.text && c.text.trim()) {
@@ -195,20 +260,19 @@ function describeTool(name, input) {
     case 'Bash':      return 'Running: ' + String(input.command || '').replace(/\s+/g, ' ').slice(0, 70);
     case 'Grep':      return 'Searching for "' + (input.pattern || '') + '"';
     case 'Glob':      return 'Finding files ' + (input.pattern || '');
-    case 'WebFetch':  return 'Fetching a page';
-    case 'WebSearch': return 'Searching the web';
-    case 'TodoWrite': return 'Updating its plan';
-    case 'Task':      return 'Delegating a subtask';
     default:          return name;
   }
 }
 
-// ---- helpers ----
 function sendFile(res, file, type) {
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(500); res.end('read error'); return; }
     res.writeHead(200, { 'Content-Type': type }); res.end(data);
   });
+}
+function sendJson(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
 }
 function loadDotEnv(file) {
   try {
