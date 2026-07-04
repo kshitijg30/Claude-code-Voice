@@ -1,53 +1,75 @@
-# Voice · Claude Code
+# Evolving Software
 
-A single-page browser voice agent whose **brain is Claude Code itself** — not a
-hosted API model. You talk, Deepgram Flux detects when your sentence ends, the
-transcript goes to a persistent headless `claude` session that can read/edit
-files and run commands in a project folder, and the reply is spoken back with
-Puter.js TTS.
+**Personal software that lives in a folder, grows as you talk, and reorganizes itself.**
+
+The brain is **Claude Code itself** — not a hosted API. You speak, a headless `claude` session reads and edits files in your project folder, and the reply is spoken back. Over time the folder becomes the organism: code, agents, session history, and (next) file-based memory all live on disk.
 
 ```
-mic → local bridge → Deepgram Flux (ASR + end-of-turn) → claude -p --resume → reply → Puter TTS → speaker
+You speak → Deepgram Flux → claude -p --resume → edits folder → reply → Puter TTS
+                ↑                              ↓
+           live trace UI              sessions.db (turn + activity log)
 ```
 
-The browser only captures mic audio and plays TTS. The **Node bridge proxies
-Deepgram** (holding the key server-side with proper header auth) and runs Claude,
-so no API key ever reaches the browser.
+North-star vision: [`docs/superpowers/specs/2026-07-04-self-evolving-agent-vision.md`](docs/superpowers/specs/2026-07-04-self-evolving-agent-vision.md)
+
+---
+
+## What v1 includes today
+
+### Voice agent
+- Mic → **Deepgram Flux** (streaming ASR + end-of-turn) → local Node bridge → **`claude -p`**
+- Replies spoken via **Puter.js TTS** (no TTS key needed)
+- Deepgram key stays server-side; browser only streams PCM audio
+
+### Session-based memory
+Each agent is a **persistent Claude Code session** backed by SQLite (`sessions.db`):
+
+| Stored | Where | Purpose |
+|--------|-------|---------|
+| Turns | `turns` table | Your transcript + Claude's reply per turn |
+| Activities | `activities` table | Thinking, tool calls, results — full agent trace |
+| Agent metadata | `sessions` table | Name, system prompt, status, handoff parent |
+
+- First turn: `--session-id <uuid>`
+- Later turns: `--resume <uuid>` (also restored after page refresh via turn history)
+- Browse past sessions in the **History** panel
+- API: `GET /api/sessions`, `GET /api/agents`
+
+Session memory = Claude's in-session context **plus** the durable turn/activity log in the folder. File-based memory (`memory/goals.md`, etc.) is planned for v1.1 — see the vision doc.
+
+### Multi-agent orchestration
+- Spawn **parallel agents**, each with its own session and **configurable system prompt**
+- **Pause / resume** per agent
+- **Hand off** — summarizes one session and seeds a new agent with that context
+- Pick which agent receives **voice** input
+- Send text tasks to any agent while others run in parallel
+
+### UI (sidebar layout)
+- **Navbar** — project path, session id, connection status
+- **Left sidebar** — navigation + agent list
+- **Center** — mic orb + status
+- **Right sidebar** — chat, live trace, agent config, history
+
+---
 
 ## Requirements
 
 - `claude` CLI logged in (`claude --version` works)
-- Node 18+
-- A Deepgram API key (Flux access)
-- A modern browser (Chrome recommended) with mic permission
+- Node 22+ (uses built-in `node:sqlite` for session store)
+- Deepgram API key (Flux access)
+- Chrome or similar with mic permission
 
 ## Setup
 
 ```bash
-cd voice-cc-agent
+cd voice-cc-agent   # or clone Evolving-Software
 npm install
-# edit .env — set DEEPGRAM_API_KEY (and optionally PROJECT_DIR / CLAUDE_MODEL)
+cp .env.example .env 2>/dev/null || true
+# set DEEPGRAM_API_KEY in .env
 npm start
 ```
 
-Then open **http://localhost:5111**, click the mic, and start talking.
-
-## How it works
-
-- **`index.html`** — captures mic audio at 16 kHz and streams raw linear16 PCM
-  to the local bridge over one WebSocket; shows live partial transcripts and
-  speaks Claude's reply with `puter.ai.txt2speech`. No API key in the browser.
-- **`server.js`** — serves the page and proxies **Deepgram Flux** (which handles
-  transcription *and* end-of-turn detection) using a server-side header auth.
-  On each finished turn it spawns:
-  ```
-  claude -p "<transcript>" --resume <SESSION_ID> \
-    --add-dir <PROJECT_DIR> --permission-mode acceptEdits \
-    --model <CLAUDE_MODEL> --output-format json \
-    --append-system-prompt "<voice persona>"
-  ```
-  The first turn creates the session; every later turn resumes the **same**
-  session id, so memory and tool state carry across the whole conversation.
+Open **http://localhost:5111**, click the mic, and talk.
 
 ## Config (`.env`)
 
@@ -55,16 +77,60 @@ Then open **http://localhost:5111**, click the mic, and start talking.
 |-----|---------|---------|
 | `DEEPGRAM_API_KEY` | — | Deepgram Flux key |
 | `PORT` | `5111` | Local server port |
-| `PROJECT_DIR` | this folder | Directory Claude works in (so it can see `index.html`) |
-| `CLAUDE_MODEL` | `opus` | Model alias passed to `claude --model` |
-| `TURN_TIMEOUT_MS` | `180000` | Kill a turn if `claude` runs longer |
+| `PROJECT_DIR` | this folder | Directory Claude works in — **the organism lives here** |
+| `CLAUDE_MODEL` | `sonnet` | Model alias for `claude --model` |
+| `TURN_TIMEOUT_MS` | `180000` | Kill a turn if Claude runs longer |
 
-## Notes / v1 scope
+## Architecture
 
-- **Full agent**, permission mode `acceptEdits` — headless, won't hang on
-  prompts. It runs in `PROJECT_DIR`; point that at a repo you trust.
-- **No barge-in** yet: the mic is gated off while Claude is thinking/speaking.
-- **No streaming**: v1 waits for the full reply, then speaks. (v2 idea:
-  `--output-format stream-json` to speak sentence-by-sentence.)
+```
+┌─ index.html (browser) ─────────────────────────────────────┐
+│  navbar · left nav · mic · right panels                   │
+│  WebSocket ←→ PCM audio + JSON events                     │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌─ server.js (bridge) ──────▼──────────────────────────────┐
+│  Deepgram Flux proxy · multi-agent runtime                │
+│  session lock (one claude process per session at a time)  │
+│  spawns: claude -p --resume --add-dir PROJECT_DIR …       │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌─ on disk ─────────────────▼──────────────────────────────┐
+│  sessions.db · index.html · server.js · (future: memory/) │
+└──────────────────────────────────────────────────────────┘
+```
 
-Design spec: [`docs/superpowers/specs/2026-07-04-voice-cc-agent-design.md`](docs/superpowers/specs/2026-07-04-voice-cc-agent-design.md)
+Key files:
+
+| File | Role |
+|------|------|
+| `index.html` | UI shell (agent-editable) |
+| `server.js` | Voice bridge + multi-agent orchestration |
+| `db.js` | Session / turn / activity persistence |
+| `sessions.db` | SQLite store (gitignored) |
+| `cc-hook.js` | Blocks double-speech side effects in headless mode |
+
+## Roadmap (short)
+
+| Phase | Focus |
+|-------|--------|
+| **v1** ✅ | Voice, multi-agent, session memory, live trace, sidebar UI |
+| **v1.1** | `memory/` folder — goals, preferences, decisions as files |
+| **v2** | Self-modifying UI — dynamic panels from `ui/manifest.json` |
+| **v3** | Self-organizing agents — auto-spawn, retire, meta-organizer |
+| **v4** | Continuous evolution — prompt tuning, changelog, end-of-session growth |
+
+Full roadmap: [`docs/superpowers/specs/2026-07-04-self-evolving-agent-vision.md`](docs/superpowers/specs/2026-07-04-self-evolving-agent-vision.md)
+
+Original voice-agent design: [`docs/superpowers/specs/2026-07-04-voice-cc-agent-design.md`](docs/superpowers/specs/2026-07-04-voice-cc-agent-design.md)
+
+## v1 limits
+
+- No **barge-in** (mic off while Claude thinks/speaks)
+- No **streaming TTS** (waits for full reply before speaking)
+- Session memory is **SQLite + Claude session**, not yet file-based `memory/`
+- Point `PROJECT_DIR` at a folder you trust — agent runs with `acceptEdits`
+
+---
+
+*The folder is the organism. Git is its genome. Voice is how you talk to it.*

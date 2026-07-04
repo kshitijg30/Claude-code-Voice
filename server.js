@@ -52,21 +52,30 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+// One claude process per session-id at a time (global across browser tabs).
+const sessionLocks = new Map();
+function withSessionLock(sessionId, fn) {
+  const prev = sessionLocks.get(sessionId) || Promise.resolve();
+  const job = prev.then(() => new Promise((resolve) => { fn(resolve); })).catch(() => {});
+  sessionLocks.set(sessionId, job);
+  return job;
+}
+
 wss.on('connection', (browser) => {
   let activeAgentId = null;
   let voiceBusy = false;
   let dg = null;
-  const rt = new Map(); // agentId -> { started, busy }
+  const rt = new Map(); // agentId -> { busy }
 
   function say(obj) { try { browser.send(JSON.stringify(obj)); } catch {} }
   function runtime(id) {
-    if (!rt.has(id)) rt.set(id, { started: false, busy: false });
+    if (!rt.has(id)) rt.set(id, { busy: false });
     return rt.get(id);
   }
   function agentRow(a) {
     const r = runtime(a.id);
     return { id: a.id, name: a.name || 'Agent', status: a.status || 'active',
-      turn_count: a.turn_count, parent_id: a.parent_id, busy: r.busy, started: r.started,
+      turn_count: a.turn_count, parent_id: a.parent_id, busy: r.busy,
       system_prompt: a.system_prompt || DEFAULT_SYSTEM_PROMPT };
   }
   function pushAgents() { say({ type: 'agents', agents: store.listAgents().map(agentRow) }); }
@@ -112,22 +121,23 @@ wss.on('connection', (browser) => {
 
     store.ensureSession({ sessionId: agentId, projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
       name: meta.name, systemPrompt: meta.system_prompt });
+    const resume = store.hasTurns(agentId);
     const turnId = store.startTurn({ sessionId: agentId, userText: text });
     const prompt = meta.system_prompt || DEFAULT_SYSTEM_PROMPT;
 
-    runClaude({ text, sessionId: agentId, resume: r.started, systemPrompt: prompt },
-      (ev) => {
-        if (ev.type === 'activity') store.recordActivity({ turnId, kind: ev.kind, text: ev.text, detail: ev.detail, isError: ev.isError });
-        say({ ...ev, agentId });
-      },
-      (reply, err) => {
-        r.busy = false;
-        if (!err) r.started = true;
-        pushAgents();
-        if (err) { store.completeTurn({ turnId, error: err }); say({ type: 'agent:reply', agentId, text: 'Something went wrong.', error: err }); }
-        else { store.completeTurn({ turnId, replyText: reply }); say({ type: 'agent:reply', agentId, text: reply }); }
-        if (opts.voice) { voiceBusy = false; say({ type: 'status', state: 'speaking' }); }
-      });
+    withSessionLock(agentId, (unlock) => {
+      runClaude({ text, sessionId: agentId, resume, systemPrompt: prompt },
+        (ev) => {
+          if (ev.type === 'activity') store.recordActivity({ turnId, kind: ev.kind, text: ev.text, detail: ev.detail, isError: ev.isError });
+          say({ ...ev, agentId });
+        },
+        (reply, err) => {
+          r.busy = false; pushAgents(); unlock();
+          if (err) { store.completeTurn({ turnId, error: err }); say({ type: 'agent:reply', agentId, text: 'Something went wrong.', error: err }); }
+          else { store.completeTurn({ turnId, replyText: reply }); say({ type: 'agent:reply', agentId, text: reply }); }
+          if (opts.voice) { voiceBusy = false; say({ type: 'status', state: 'speaking' }); }
+        });
+    });
   }
 
   function handleVoiceTurn(text) { runAgentTurn(activeAgentId, text, { voice: true }); }
@@ -135,22 +145,25 @@ wss.on('connection', (browser) => {
   function handoff(fromId, name, systemPrompt) {
     const meta = store.getAgentMeta(fromId);
     if (!meta) return;
-    const summaryPrompt = 'Summarize this entire session for handoff to another agent. Include goals, decisions, files changed, current state, and open items. Be concise but complete.';
     const r = runtime(fromId);
+    if (r.busy) { say({ type: 'agent:error', agentId: fromId, error: 'Agent is busy' }); return; }
     r.busy = true; pushAgents();
-    runClaude({ text: summaryPrompt, sessionId: fromId, resume: r.started,
-      systemPrompt: 'You produce handoff summaries only. No tools.' },
-      () => {},
-      (summary, err) => {
-        r.busy = false; pushAgents();
-        const id = crypto.randomUUID();
-        const base = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-        const full = base + (summary && !err ? '\n\n--- Handoff from ' + (meta.name || 'agent') + ' ---\n' + summary : '');
-        store.createAgent({ id, name: name || 'Agent (handoff)', projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
-          systemPrompt: full, parentId: fromId, summary: summary || null });
-        pushAgents();
-        say({ type: 'agent:handoff', fromId, agentId: id, summary: summary || '' });
-      });
+    const summaryPrompt = 'Summarize this entire session for handoff to another agent. Include goals, decisions, files changed, current state, and open items. Be concise but complete.';
+    withSessionLock(fromId, (unlock) => {
+      runClaude({ text: summaryPrompt, sessionId: fromId, resume: store.hasTurns(fromId),
+        systemPrompt: 'You produce handoff summaries only. No tools.' },
+        () => {},
+        (summary, err) => {
+          r.busy = false; unlock(); pushAgents();
+          const id = crypto.randomUUID();
+          const base = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+          const full = base + (summary && !err ? '\n\n--- Handoff from ' + (meta.name || 'agent') + ' ---\n' + summary : '');
+          store.createAgent({ id, name: name || 'Agent (handoff)', projectDir: PROJECT_DIR, model: CLAUDE_MODEL,
+            systemPrompt: full, parentId: fromId, summary: summary || null });
+          pushAgents();
+          say({ type: 'agent:handoff', fromId, agentId: id, summary: summary || '' });
+        });
+    });
   }
 
   browser.on('message', (data, isBinary) => {
@@ -186,7 +199,7 @@ wss.on('connection', (browser) => {
   browser.on('close', () => closeDeepgram());
 });
 
-function runClaude({ text, sessionId, resume, systemPrompt }, onEvent, done) {
+function runClaude({ text, sessionId, resume, systemPrompt }, onEvent, done, attempt = 0) {
   const args = ['-p', text, '--output-format', 'stream-json', '--verbose',
     '--model', CLAUDE_MODEL, '--permission-mode', 'acceptEdits',
     '--add-dir', PROJECT_DIR, '--settings', SETTINGS_FILE,
@@ -209,9 +222,14 @@ function runClaude({ text, sessionId, resume, systemPrompt }, onEvent, done) {
   child.on('error', (e) => { clearTimeout(timer); done(null, e.message); });
   child.on('close', (code) => {
     clearTimeout(timer);
+    const errMsg = errOut.trim();
+    if (errMsg.includes('already in use') && attempt < 4) {
+      return setTimeout(() => runClaude({ text, sessionId, resume: true, systemPrompt }, onEvent, done, attempt + 1), 800 * (attempt + 1));
+    }
     if (finalErr) return done(null, finalErr);
     if (finalText != null) return done(finalText || 'Done.', null);
-    done(null, code !== 0 ? `exit ${code}: ${errOut.slice(0, 300)}` : 'no result');
+    if (code === 0) return done('Done.', null);
+    done(null, errMsg || (code == null ? 'Process ended unexpectedly' : `exit ${code}`));
   });
 
   function handleEvent(line) {

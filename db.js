@@ -86,6 +86,11 @@ const getTurnsStmt = db.prepare(
 const getActivitiesStmt = db.prepare(
   'SELECT ts, kind, text, detail, is_error FROM activities WHERE turn_id = ? ORDER BY id ASC'
 );
+const turnCountStmt = db.prepare('SELECT COUNT(*) AS n FROM turns WHERE session_id = ?');
+
+function hasTurns(sessionId) {
+  return turnCountStmt.get(sessionId).n > 0;
+}
 
 function createAgent({ id, name, projectDir, model, systemPrompt, parentId, summary, status }) {
   const now = Date.now();
@@ -143,7 +148,7 @@ function getSession(id) {
 }
 
 module.exports = {
-  createAgent, ensureSession, updateAgent, getAgentMeta,
+  createAgent, ensureSession, updateAgent, getAgentMeta, hasTurns,
   startTurn, completeTurn, recordActivity,
   listSessions, listAgents, getSession,
 };
