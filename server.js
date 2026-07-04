@@ -152,14 +152,38 @@ function runClaude({ text, sessionId, resume }, onEvent, done) {
       onEvent({ type: 'session', cwd: e.cwd || PROJECT_DIR, sessionId: e.session_id, model: e.model });
     } else if (e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
       for (const c of e.message.content) {
-        if (c.type === 'tool_use') onEvent({ type: 'activity', kind: 'tool', tool: c.name, text: describeTool(c.name, c.input || {}) });
-        else if (c.type === 'text' && c.text && c.text.trim()) onEvent({ type: 'activity', kind: 'say', text: c.text.trim().slice(0, 160) });
+        if (c.type === 'tool_use') {
+          onEvent({
+            type: 'activity', kind: 'tool', tool: c.name,
+            text: describeTool(c.name, c.input || {}),
+            detail: detailForTool(c.name, c.input || {}),
+          });
+        } else if (c.type === 'thinking' && c.thinking && c.thinking.trim()) {
+          onEvent({ type: 'activity', kind: 'thinking', text: c.thinking.trim() });
+        } else if (c.type === 'text' && c.text && c.text.trim()) {
+          onEvent({ type: 'activity', kind: 'say', text: c.text.trim() });
+        }
+      }
+    } else if (e.type === 'user' && e.message && Array.isArray(e.message.content)) {
+      for (const c of e.message.content) {
+        if (c.type !== 'tool_result') continue;
+        const raw = Array.isArray(c.content)
+          ? c.content.map((x) => (typeof x === 'string' ? x : (x && x.text) || '')).join('')
+          : typeof c.content === 'string' ? c.content : '';
+        const snippet = raw.replace(/\s+/g, ' ').trim();
+        if (snippet) onEvent({ type: 'activity', kind: 'result', text: snippet.slice(0, 320), isError: !!c.is_error });
       }
     } else if (e.type === 'result') {
       if (e.subtype === 'success') finalText = (e.result || '').trim();
       else finalErr = e.subtype || 'error';
     }
   }
+}
+
+function detailForTool(name, input) {
+  if (name === 'Bash') return String(input.command || '');
+  if (input.file_path) return input.file_path;
+  return '';
 }
 
 function describeTool(name, input) {

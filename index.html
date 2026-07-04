@@ -239,22 +239,47 @@
     white-space:nowrap;
   }
 
-  /* live activity feed */
-  .activity-card{position:relative}
-  #activity{
-    display:flex;flex-direction:column;gap:7px;max-height:180px;overflow-y:auto;
+  /* tabs */
+  .tabs{
+    width:100%;max-width:560px;display:flex;gap:6px;margin-bottom:12px;
+    padding:4px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid var(--line);
+  }
+  .tab{
+    flex:1;padding:9px 14px;border:none;border-radius:10px;cursor:pointer;
+    font:600 12px/1 'Inter',sans-serif;letter-spacing:.3px;color:var(--dim);
+    background:transparent;transition:background .2s,color .2s;position:relative;
+  }
+  .tab:hover{color:var(--txt);background:rgba(255,255,255,.04)}
+  .tab.active{color:var(--txt);background:rgba(167,139,255,.14);box-shadow:inset 0 0 0 1px rgba(167,139,255,.25)}
+  .tab .badge{
+    display:none;margin-left:6px;padding:1px 6px;border-radius:999px;
+    font-size:10px;font-weight:700;background:var(--think);color:#1a1400;
+  }
+  .tab .badge.show{display:inline-block}
+  .view{display:none;width:100%;max-width:560px}
+  .view.active{display:flex;flex-direction:column;gap:10px}
+
+  /* agent trace feed */
+  #trace{
+    display:flex;flex-direction:column;gap:8px;max-height:min(62vh,520px);overflow-y:auto;
     scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent;
   }
-  #activity:empty::after{content:"nothing yet — ask Claude to do something";color:var(--dimmer);font-style:italic;font-size:13px}
+  #trace:empty::after{content:"Agent output will appear here while Claude works — switch to this tab during a turn";color:var(--dimmer);font-style:italic;font-size:13px;line-height:1.5}
   .act{
     display:flex;align-items:flex-start;gap:9px;font-size:13.5px;color:#cdd4e6;line-height:1.45;
+    padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid transparent;
     opacity:0;transform:translateY(4px);animation:actin .28s ease forwards;
   }
   @keyframes actin{to{opacity:1;transform:none}}
-  .act .aico{flex:0 0 auto;width:16px;text-align:center;margin-top:1px;font-size:12px}
-  .act.tool .aico{color:var(--accent2)}
-  .act.say{color:var(--dim);font-style:italic}
+  .act .aico{flex:0 0 auto;width:18px;text-align:center;margin-top:1px;font-size:11px;font-weight:700}
+  .act.tool{border-color:rgba(94,224,255,.12)} .act.tool .aico{color:var(--accent2)}
+  .act.thinking{border-color:rgba(255,207,92,.18);background:rgba(255,207,92,.04)} .act.thinking .aico{color:var(--think)}
+  .act.thinking .body{white-space:pre-wrap;color:#e8dcc0;font-size:13px}
+  .act.say{border-color:rgba(167,139,255,.12);font-style:italic;color:var(--dim)}
+  .act.result{border-color:rgba(63,228,168,.12);font-size:12.5px;color:#b8c8be}
+  .act.result.err{border-color:rgba(255,112,134,.2);color:#ffc8d0}
   .act .code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#e3e8f5}
+  .act .detail{display:block;margin-top:4px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--dimmer);white-space:pre-wrap;word-break:break-all}
 
   @media (max-width:520px){
     .sub{font-size:19px;margin-bottom:26px}
@@ -288,10 +313,18 @@
     <span class="sid" id="sessId">session —</span>
   </div>
 
-  <div class="panels">
+  <div class="tabs">
+    <button type="button" class="tab active" data-view="chat">Chat</button>
+    <button type="button" class="tab" data-view="trace">Agent trace<span class="badge" id="traceBadge">new</span></button>
+  </div>
+
+  <div class="view active" id="viewChat">
     <div class="card"><div class="lbl"><span class="tag you"></span>You</div><div id="you" class="muted">waiting for you to speak…</div></div>
-    <div class="card activity-card"><div class="lbl"><span class="tag cc"></span>Activity</div><div id="activity"></div></div>
     <div class="card"><div class="lbl"><span class="tag cc"></span>Claude</div><div id="claude" class="muted">standing by…</div></div>
+  </div>
+
+  <div class="view" id="viewTrace">
+    <div class="card"><div class="lbl"><span class="tag cc"></span>Live agent output</div><div id="trace"></div></div>
   </div>
 
   <div class="foot" id="foot">connecting…</div>
@@ -301,7 +334,8 @@
   const $ = (id) => document.getElementById(id);
   const body=document.body, micEl=$('mic'), icoEl=$('ico'), stateEl=$('state'),
         hintEl=$('hint'), youEl=$('you'), claudeEl=$('claude'), footEl=$('foot'), bannerEl=$('banner'),
-        actEl=$('activity'), sessPathEl=$('sessPath'), sessIdEl=$('sessId');
+        traceEl=$('trace'), traceBadge=$('traceBadge'), sessPathEl=$('sessPath'), sessIdEl=$('sessId');
+  let activeView='chat';
 
   const ICON={idle:'🎙️',listening:'🎧',thinking:'💭',speaking:'🔊',error:'⚠️'};
   const TEXT={idle:'Click the mic to start',listening:'<b>Listening…</b> go ahead',
@@ -346,19 +380,33 @@
     if(sid){ sessIdEl.textContent='session '+String(sid).slice(0,8); sessIdEl.title=sid; }
   }
 
-  // ---- live activity feed ----
-  const ACT_ICON={tool:'▸',say:'“'};
-  function clearActivity(){ actEl.innerHTML=''; }
+  // ---- tabs + agent trace ----
+  document.querySelectorAll('.tab').forEach((btn)=>{
+    btn.addEventListener('click',()=>{
+      activeView=btn.dataset.view||'chat';
+      document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===activeView));
+      $('viewChat').classList.toggle('active',activeView==='chat');
+      $('viewTrace').classList.toggle('active',activeView==='trace');
+      if(activeView==='trace') traceBadge.classList.remove('show');
+    });
+  });
+  const ACT_ICON={tool:'▸',thinking:'💭',say:'“',result:'↩'};
+  function clearActivity(){ traceEl.innerHTML=''; traceBadge.classList.remove('show'); }
   function addActivity(m){
     const row=document.createElement('div');
-    row.className='act '+(m.kind||'tool');
-    const ico=document.createElement('span'); ico.className='aico'; ico.textContent=ACT_ICON[m.kind]||'▸';
-    const txt=document.createElement('span');
-    if(m.kind==='tool' && /^Running: /.test(m.text||'')){
-      txt.innerHTML='Running <span class="code">'+escapeHtml(m.text.replace(/^Running: /,''))+'</span>';
-    } else { txt.textContent=m.text||''; }
-    row.appendChild(ico); row.appendChild(txt);
-    actEl.appendChild(row); actEl.scrollTop=actEl.scrollHeight;
+    const kind=m.kind||'tool';
+    row.className='act '+kind+(kind==='result'&&m.isError?' err':'');
+    const ico=document.createElement('span'); ico.className='aico'; ico.textContent=ACT_ICON[kind]||'▸';
+    const body=document.createElement('span'); body.className='body';
+    if(kind==='tool' && /^Running: /.test(m.text||'')){
+      body.innerHTML='Running <span class="code">'+escapeHtml(m.text.replace(/^Running: /,''))+'</span>';
+    } else { body.textContent=m.text||''; }
+    const wrap=document.createElement('div'); wrap.style.flex='1';
+    wrap.appendChild(body);
+    if(m.detail){ const d=document.createElement('span'); d.className='detail'; d.textContent=m.detail; wrap.appendChild(d); }
+    row.appendChild(ico); row.appendChild(wrap);
+    traceEl.appendChild(row); traceEl.scrollTop=traceEl.scrollHeight;
+    if(activeView!=='trace') traceBadge.classList.add('show');
   }
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
