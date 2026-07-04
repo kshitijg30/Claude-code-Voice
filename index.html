@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice · Claude Code</title>
+<script src="https://js.puter.com/v2/"></script>
+<style>
+  :root{
+    --bg0:#070a12; --bg1:#0e1422; --panel:rgba(255,255,255,.04); --line:rgba(255,255,255,.09);
+    --txt:#eef2fb; --dim:#93a0bd; --accent:#8b6cff; --accent2:#4bd6ff;
+    --live:#37e0b0; --think:#ffc24d; --err:#ff6b7d;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:var(--txt);background:
+      radial-gradient(900px 600px at 15% -10%,rgba(139,108,255,.20),transparent 60%),
+      radial-gradient(800px 600px at 100% 0%,rgba(75,214,255,.14),transparent 55%),
+      linear-gradient(180deg,var(--bg1),var(--bg0));
+    min-height:100%;display:flex;flex-direction:column;align-items:center;padding:34px 20px 60px}
+  .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--dim);box-shadow:0 0 10px var(--dim)}
+  body[data-state="listening"] .dot{background:var(--live);box-shadow:0 0 12px var(--live)}
+  body[data-state="thinking"]  .dot{background:var(--think);box-shadow:0 0 12px var(--think)}
+  body[data-state="speaking"]  .dot{background:var(--accent);box-shadow:0 0 12px var(--accent)}
+  body[data-state="error"]     .dot{background:var(--err);box-shadow:0 0 12px var(--err)}
+  h1{font-size:13px;font-weight:700;letter-spacing:2px;color:var(--dim);margin:0;text-transform:uppercase}
+  .sub{color:var(--dim);font-size:13px;margin:6px 0 30px;text-align:center}
+  .banner{display:none;max-width:560px;margin:0 0 22px;padding:12px 16px;border-radius:12px;
+    background:rgba(255,107,125,.12);border:1px solid rgba(255,107,125,.4);color:#ffd7dd;font-size:13px;line-height:1.5}
+  .banner.show{display:block}
+  .banner code{color:#fff;background:rgba(0,0,0,.3);padding:1px 6px;border-radius:5px}
+
+  .stage{position:relative;width:230px;height:230px;display:grid;place-items:center;margin-bottom:6px}
+  .halo{position:absolute;inset:0;border-radius:50%;opacity:.0;transition:opacity .4s;
+    background:radial-gradient(circle,rgba(139,108,255,.35),transparent 65%)}
+  body[data-state="listening"] .halo,body[data-state="speaking"] .halo{opacity:1;animation:breathe 2.4s ease-in-out infinite}
+  @keyframes breathe{0%,100%{transform:scale(.9)}50%{transform:scale(1.08)}}
+  .mic{position:relative;width:148px;height:148px;border-radius:50%;cursor:pointer;user-select:none;
+    display:grid;place-items:center;border:1px solid var(--line);
+    background:radial-gradient(circle at 34% 28%,#2b3350,#141a2b);
+    box-shadow:0 12px 40px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
+    transition:transform .18s,box-shadow .3s}
+  .mic:hover{transform:translateY(-2px) scale(1.03)}
+  .mic:active{transform:scale(.97)}
+  .mic .ico{font-size:52px;line-height:1;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+  .ring{position:absolute;inset:-6px;border-radius:50%;border:2px solid transparent;pointer-events:none}
+  body[data-state="listening"] .ring{border-color:var(--live);animation:pulse 1.7s ease-out infinite}
+  body[data-state="speaking"]  .ring{border-color:var(--accent);animation:pulse 1.2s ease-out infinite}
+  body[data-state="thinking"]  .ring{border-top-color:var(--think);border-right-color:var(--think);animation:spin 1s linear infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(55,224,176,.4)}100%{box-shadow:0 0 0 34px rgba(55,224,176,0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .state{font-size:14px;color:var(--dim);height:22px;margin:12px 0 4px;letter-spacing:.2px}
+  .state b{color:var(--txt);font-weight:600}
+  .hint{font-size:12px;color:var(--dim);opacity:.7;margin-bottom:26px}
+
+  .panels{width:100%;max-width:560px;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px 18px;
+    backdrop-filter:blur(8px)}
+  .card .lbl{display:flex;align-items:center;gap:7px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:9px}
+  .tag{width:6px;height:6px;border-radius:50%}
+  .tag.you{background:var(--live)} .tag.cc{background:var(--accent)}
+  #you{color:#cfeee3;font-size:15px;min-height:20px}
+  #claude{color:var(--txt);white-space:pre-wrap;line-height:1.55;font-size:15px;min-height:20px}
+  .muted{color:var(--dim)!important;opacity:.6}
+  .foot{margin-top:26px;font-size:12px;color:var(--dim);text-align:center;max-width:560px;line-height:1.5}
+  .foot code{color:#c3ccdf}
+</style>
+</head>
+<body data-state="idle">
+  <div class="top"><span class="dot"></span><h1>Voice · Claude Code</h1></div>
+  <div class="sub">Talk to Claude Code. It can read, edit, and run things — and it talks back.</div>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="stage">
+    <div class="halo"></div>
+    <div class="ring"></div>
+    <div class="mic" id="mic" role="button" tabindex="0" title="Start / stop listening">
+      <span class="ico" id="ico">🎙️</span>
+    </div>
+  </div>
+  <div class="state" id="state">Click the mic to start</div>
+  <div class="hint" id="hint">you'll be asked for microphone access</div>
+
+  <div class="panels">
+    <div class="card"><div class="lbl"><span class="tag you"></span>You</div><div id="you" class="muted">…</div></div>
+    <div class="card"><div class="lbl"><span class="tag cc"></span>Claude</div><div id="claude" class="muted">…</div></div>
+  </div>
+
+  <div class="foot" id="foot">connecting…</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const body=document.body, micEl=$('mic'), icoEl=$('ico'), stateEl=$('state'),
+        hintEl=$('hint'), youEl=$('you'), claudeEl=$('claude'), footEl=$('foot'), bannerEl=$('banner');
+
+  const ICON={idle:'🎙️',listening:'🎧',thinking:'💭',speaking:'🔊',error:'⚠️'};
+  const TEXT={idle:'Click the mic to start',listening:'<b>Listening…</b> go ahead',
+              thinking:'<b>Claude is working…</b>',speaking:'<b>Speaking…</b>',error:'<b>Error</b>'};
+  function setState(s,extra){ body.dataset.state=s; icoEl.textContent=ICON[s]||'🎙️'; stateEl.innerHTML=extra||TEXT[s]||''; }
+  function banner(html){ if(!html){bannerEl.classList.remove('show');return;} bannerEl.innerHTML=html; bannerEl.classList.add('show'); }
+
+  let running=false, bridge=null, bridgeReady=false;
+  let audioCtx=null, micStream=null, node=null;
+  let pcm=new Int16Array(0); const CHUNK=1280; // 80ms @16k
+
+  // ---- hard guard: file:// won't allow mic or websockets ----
+  if(location.protocol==='file:'){
+    banner('This page must be served by the local bridge. In a terminal run <code>npm start</code> in the voice-cc-agent folder, then open <code>http://localhost:5111</code> — not the file directly.');
+    setState('error'); hintEl.textContent='';
+  }
+
+  // ---- bridge connection (best-effort, never blocks the button) ----
+  function connectBridge(){
+    try{
+      bridge=new WebSocket('ws://'+location.host);
+      bridge.binaryType='arraybuffer';
+      bridge.onopen=()=>{ bridgeReady=true; footEl.textContent='connected to bridge ✓'; };
+      bridge.onclose=()=>{ bridgeReady=false; if(running){setState('error','<b>Bridge lost</b>'); } footEl.textContent='bridge disconnected — retrying…'; setTimeout(connectBridge,1500); };
+      bridge.onerror=()=>{ footEl.textContent='cannot reach bridge on this page'; };
+      bridge.onmessage=onBridge;
+    }catch(e){ footEl.textContent='bridge error: '+e.message; }
+  }
+  function onBridge(ev){
+    let m; try{ m=JSON.parse(ev.data); }catch{ return; }
+    if(m.type==='status'){ if(m.state) setState(m.state, m.detail?('<b>'+m.detail+'</b>'):null); }
+    else if(m.type==='partial'){ youEl.classList.remove('muted'); youEl.textContent=m.text; }
+    else if(m.type==='transcript'){ youEl.classList.remove('muted'); youEl.textContent=m.text; }
+    else if(m.type==='reply'){ speak(m.text, m.error); }
+  }
+
+  // ---- Puter TTS ----
+  function speak(text,error){
+    claudeEl.classList.remove('muted');
+    claudeEl.textContent=text||'(no reply)';
+    setState('speaking');
+    const clean=(text||'').replace(/```[\s\S]*?```/g,' ').replace(/[`*_#>]/g,'').replace(/\s+/g,' ').trim().slice(0,1400)||'Done.';
+    const finish=()=>{ if(bridgeReady) try{bridge.send(JSON.stringify({type:'resume'}));}catch{} if(running) setState('listening'); else setState('idle'); };
+    if(!window.puter||!puter.ai||!puter.ai.txt2speech){ footEl.textContent='TTS unavailable (puter.js not loaded)'; return finish(); }
+    puter.ai.txt2speech(clean).then((audio)=>{ audio.onended=finish; audio.onerror=finish; const p=audio.play(); if(p&&p.catch)p.catch(finish); }).catch(finish);
+  }
+
+  // ---- mic capture → stream PCM to bridge ----
+  async function start(){
+    if(running) return;
+    if(location.protocol==='file:') return;
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ banner('This browser has no microphone API. Use Chrome/Edge/Safari over http://localhost.'); setState('error'); return; }
+    try{
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+      if(audioCtx.state==='suspended') await audioCtx.resume();
+      micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+    }catch(e){ banner('Microphone was blocked: '+e.message+'. Allow mic access for this site and click the mic again.'); setState('error'); return; }
+
+    const code="class P extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c){const b=new Int16Array(c.length);for(let k=0;k<c.length;k++){let s=Math.max(-1,Math.min(1,c[k]));b[k]=s<0?s*0x8000:s*0x7FFF;}this.port.postMessage(b,[b.buffer]);}return true;}}registerProcessor('pcm',P);";
+    const url=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+    await audioCtx.audioWorklet.addModule(url);
+    node=new AudioWorkletNode(audioCtx,'pcm');
+    audioCtx.createMediaStreamSource(micStream).connect(node);
+    node.connect(audioCtx.destination);
+    node.port.onmessage=(e)=>onPcm(e.data);
+
+    running=true; banner(''); hintEl.textContent='click the mic again to stop';
+    youEl.textContent='…'; claudeEl.textContent='…'; youEl.classList.add('muted'); claudeEl.classList.add('muted');
+    if(bridgeReady) bridge.send(JSON.stringify({type:'start'}));
+    setState('listening');
+  }
+
+  function onPcm(int16){
+    if(!running||!bridgeReady||body.dataset.state!=='listening') return;
+    const merged=new Int16Array(pcm.length+int16.length); merged.set(pcm); merged.set(int16,pcm.length); pcm=merged;
+    while(pcm.length>=CHUNK){ bridge.send(pcm.slice(0,CHUNK).buffer); pcm=pcm.slice(CHUNK); }
+  }
+
+  function stop(){
+    running=false; pcm=new Int16Array(0);
+    if(bridgeReady) try{bridge.send(JSON.stringify({type:'stop'}));}catch{}
+    try{micStream&&micStream.getTracks().forEach(t=>t.stop());}catch{}
+    try{node&&node.disconnect();}catch{}
+    try{audioCtx&&audioCtx.close();}catch{}
+    hintEl.textContent="you'll be asked for microphone access"; setState('idle');
+  }
+
+  // ---- bind the button SYNCHRONOUSLY so it's always clickable ----
+  function toggle(){ running?stop():start(); }
+  micEl.addEventListener('click',toggle);
+  micEl.addEventListener('keydown',(e)=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();} });
+
+  // load config + bridge after handler is bound
+  fetch('/config').then(r=>r.json()).then(c=>{ footEl.innerHTML='Claude working dir: <code>'+(c.projectDir||'?')+'</code>'; if(c && c.hasKey===false) banner('No Deepgram key set on the server. Add <code>DEEPGRAM_API_KEY</code> to <code>.env</code> and restart <code>npm start</code>.'); }).catch(()=>{});
+  if(location.protocol!=='file:') connectBridge();
+})();
+</script>
+</body>
+</html>
