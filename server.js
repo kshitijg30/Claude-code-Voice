@@ -91,11 +91,13 @@ wss.on('connection', (browser) => {
     say({ type: 'transcript', text });
     say({ type: 'status', state: 'thinking' });
     log(`turn: "${text}"`);
-    runClaude({ text, sessionId, resume: started }, (reply, err) => {
-      if (err) { log('claude error: ' + err); say({ type: 'reply', text: 'Sorry, something went wrong on my end. Could you try again?', error: err }); }
-      else { started = true; say({ type: 'reply', text: reply }); }
-      say({ type: 'status', state: 'speaking' });
-    });
+    runClaude({ text, sessionId, resume: started },
+      (ev) => say(ev),                     // live activity: session/activity events
+      (reply, err) => {
+        if (err) { log('claude error: ' + err); say({ type: 'reply', text: 'Sorry, something went wrong on my end. Could you try again?', error: err }); }
+        else { started = true; say({ type: 'reply', text: reply }); }
+        say({ type: 'status', state: 'speaking' });
+      });
   }
 
   browser.on('message', (data, isBinary) => {
@@ -112,24 +114,69 @@ wss.on('connection', (browser) => {
   browser.on('close', () => { closeDeepgram(); log(`browser disconnected — session ${sessionId}`); });
 });
 
-function runClaude({ text, sessionId, resume }, done) {
-  const args = ['-p', text, '--output-format', 'json', '--model', CLAUDE_MODEL,
-    '--permission-mode', 'acceptEdits', '--add-dir', PROJECT_DIR,
-    '--settings', SETTINGS_FILE, '--append-system-prompt', SYSTEM_PROMPT];
+function runClaude({ text, sessionId, resume }, onEvent, done) {
+  // stream-json emits one JSON object per line: system/init, assistant (text +
+  // tool_use), user (tool_result), and a final result. We forward the actions
+  // as they happen so the UI can show what Claude is doing.
+  const args = ['-p', text, '--output-format', 'stream-json', '--verbose',
+    '--model', CLAUDE_MODEL, '--permission-mode', 'acceptEdits',
+    '--add-dir', PROJECT_DIR, '--settings', SETTINGS_FILE,
+    '--append-system-prompt', SYSTEM_PROMPT];
   args.push(resume ? '--resume' : '--session-id', sessionId);
 
-  const child = spawn('claude', args, { cwd: PROJECT_DIR });
-  let out = '', errOut = '';
+  // stdin 'ignore' closes it immediately so claude doesn't wait 3s for piped input.
+  const child = spawn('claude', args, { cwd: PROJECT_DIR, stdio: ['ignore', 'pipe', 'pipe'] });
+  let buf = '', errOut = '', finalText = null, finalErr = null;
   const timer = setTimeout(() => child.kill('SIGKILL'), TURN_TIMEOUT_MS);
-  child.stdout.on('data', (d) => (out += d));
+
+  child.stdout.on('data', (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+      if (line) handleEvent(line);
+    }
+  });
   child.stderr.on('data', (d) => (errOut += d));
   child.on('error', (e) => { clearTimeout(timer); done(null, e.message); });
   child.on('close', (code) => {
     clearTimeout(timer);
-    if (code !== 0) return done(null, `exit ${code}: ${errOut.slice(0, 300)}`);
-    try { const j = JSON.parse(out); done((j.result || j.text || 'Okay, done.').trim(), null); }
-    catch (e) { done(null, `bad JSON: ${e.message}`); }
+    if (finalErr) return done(null, finalErr);
+    if (finalText != null) return done(finalText || 'Okay, done.', null);
+    done(null, code !== 0 ? `exit ${code}: ${errOut.slice(0, 300)}` : 'no result');
   });
+
+  function handleEvent(line) {
+    let e; try { e = JSON.parse(line); } catch { return; }
+    if (e.type === 'system' && e.subtype === 'init') {
+      onEvent({ type: 'session', cwd: e.cwd || PROJECT_DIR, sessionId: e.session_id, model: e.model });
+    } else if (e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
+      for (const c of e.message.content) {
+        if (c.type === 'tool_use') onEvent({ type: 'activity', kind: 'tool', tool: c.name, text: describeTool(c.name, c.input || {}) });
+        else if (c.type === 'text' && c.text && c.text.trim()) onEvent({ type: 'activity', kind: 'say', text: c.text.trim().slice(0, 160) });
+      }
+    } else if (e.type === 'result') {
+      if (e.subtype === 'success') finalText = (e.result || '').trim();
+      else finalErr = e.subtype || 'error';
+    }
+  }
+}
+
+function describeTool(name, input) {
+  const base = (p) => (p ? String(p).split('/').pop() : '');
+  switch (name) {
+    case 'Read':      return 'Reading ' + base(input.file_path);
+    case 'Edit':      return 'Editing ' + base(input.file_path);
+    case 'Write':     return 'Writing ' + base(input.file_path);
+    case 'Bash':      return 'Running: ' + String(input.command || '').replace(/\s+/g, ' ').slice(0, 70);
+    case 'Grep':      return 'Searching for "' + (input.pattern || '') + '"';
+    case 'Glob':      return 'Finding files ' + (input.pattern || '');
+    case 'WebFetch':  return 'Fetching a page';
+    case 'WebSearch': return 'Searching the web';
+    case 'TodoWrite': return 'Updating its plan';
+    case 'Task':      return 'Delegating a subtask';
+    default:          return name;
+  }
 }
 
 // ---- helpers ----

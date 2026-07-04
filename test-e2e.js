@@ -23,6 +23,8 @@ ws.on('message', (raw) => {
   const m = JSON.parse(raw);
   if (m.type === 'partial') process.stdout.write('  …partial: ' + m.text + '\r');
   else if (m.type === 'transcript') console.log('\nTRANSCRIPT (you):', JSON.stringify(m.text));
+  else if (m.type === 'session') console.log('  [session] folder:', m.cwd);
+  else if (m.type === 'activity') console.log('  [activity]', m.kind + ':', m.text);
   else if (m.type === 'status') console.log('  [status]', m.state);
   else if (m.type === 'reply') { console.log('CLAUDE REPLY:', JSON.stringify(m.text), m.error ? '(ERR '+m.error+')' : ''); ws.close(); process.exit(0); }
 });
